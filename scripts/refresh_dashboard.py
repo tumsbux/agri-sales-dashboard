@@ -4,7 +4,9 @@ Refresh embedded sales data in index.html / dashboard_เกษตร.html from 
 then leave the files ready for the workflow to commit & push.
 
 Category: เกษตร (agriculture)
-Product filter: dim_product.igrcode = '18038'
+Product filter: fixed 120-code iprod allowlist (sourced from Google Sheet "Project 2026",
+tab "สินค้า", column กลุ่มย่อย=เกษตร — NOT dim_product.igrcode, which only covers a
+narrower/different set of products. See CLAUDE.md for how this list was derived.)
 
 Incremental refresh: only the current month plus the previous 1 month(s)
 are queried live from MySQL on every run. Older, "closed" months are cached in
@@ -13,7 +15,7 @@ each run fast (a couple of months of fact_sales scans instead of the full histor
 avoids long-running connections that can get dropped by MySQL.
 
 Required environment variables (set as GitHub Actions repo secrets):
-  DB_HOST, DB_PORT (default 3306), DB_USER, DB_PASSWORD, DB_NAME (default "data-lake")
+DB_HOST, DB_PORT (default 3306), DB_USER, DB_PASSWORD, DB_NAME (default "data-lake")
 """
 import os, re, json, datetime, time
 import pymysql
@@ -25,20 +27,17 @@ DB_PASSWORD = os.environ['DB_PASSWORD']
 DB_NAME = os.environ.get('DB_NAME', 'data-lake')
 
 DASHBOARD_FILE = 'dashboard_เกษตร.html'
-PRODUCT_FILTER_SQL = "p.igrcode = '18038'"
+PRODUCT_FILTER_SQL = "p.iprod IN ('0102200035','0102400000267','0102400000542','0202100002081','0202600038','0304000006','0401000000196','0401000000197','0401000000266','0401000001626','0401000001627','0401000001629','0401000001630','0401000001634','0401900000270','0401900000271','0401900000272','0401900000273','0401900000274','0401900000275','0401900000281','0401900000282','0401900000285','0401900000286','0500200005','0500200006','0500700039','0500700040','0500700042','0601400005','0601400010','1000800026','1100300000276','1110000755','1110005842','1110005872','1401700000269','1403700001498','1800300000259','1800300000260','1800300000261','1800300000262','1800300000264','1800500000334','1800500000335','1800500000336','1800500000337','1800500000338','1800500000339','1801300000409','1801300000410','1801300000411','1801400000263','1802500002028','1988032142396','1988032171730','1988032191769','1988032196269','1988321615297','2500100000331','2500100000374','2500100000375','44255619871','44255619872','4446662211','4446662212','6401061891','6900000002438','6949849165164','6985452851261','8810006000190','8850569460225','8852244016215','8852518487581','8852518547834','8853152066354','8853152088066','8853152094074','8855404033022','8855404033053','8857126458121','8857126458374','8857126458398','8857126511086','8858874515487','8858874517849','8858874517856','8858874517863','8858874528401','8859226802903','8859481466421','8859481466438','8859481466445','8859481466452','8859497600246','8859620758028','8859620758035','8859620758042','8859796622727','8859796656692','8859796656807','8859813370006','8880002145','8880002148','8880002155','8880003624','8880005527','8880009993','8889247801500','8985634060816','9551101844','9551103166','9551103167','9551103363','9551103364','9551103602','1401400000693','8852198079113','8852198079106','8859830695526')"
 START_YM = '2025-01'
 ARCHIVE_FILE = 'data_archive.json'
 FRESH_MONTH_COUNT = 2  # always re-query the current month + this many prior months live
-
 
 def connect():
     return pymysql.connect(host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD,
         database=DB_NAME, charset='utf8mb4', cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=30, read_timeout=180, write_timeout=180)
 
-
 conn = connect()
-
 
 def run(sql, params=None, retries=4):
     """Execute a query, transparently reconnecting if the MySQL connection drops mid-query."""
@@ -63,7 +62,6 @@ def run(sql, params=None, retries=4):
             conn = connect()
     raise last_err
 
-
 def month_range(start_ym):
     today = datetime.date.today()
     y, m = int(start_ym[:4]), int(start_ym[5:7])
@@ -76,14 +74,12 @@ def month_range(start_ym):
             y += 1
     return out
 
-
 def month_bounds(ym):
     y, m = int(ym[:4]), int(ym[5:7])
     start = f'{y:04d}-{m:02d}-01'
     ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
     end = f'{ny:04d}-{nm:02d}-01'
     return start, end
-
 
 months = month_range(START_YM)
 latest_ym = months[-1]
@@ -112,10 +108,10 @@ print(f"Months total: {n_months} ({months[0]}..{months[-1]}). "
 prod_desc = {}
 branch_meta = {}
 stock = {}
-prod_monthly = {}      # iprod -> {ym: {qty, sales}}   (freshly queried months only)
-branch_monthly = {}    # code  -> {ym: {qty, sales}}
-branch_bills = {}      # code  -> {ym: bills}
-monthly_totals = {}    # ym -> {qty, sales, bills}
+prod_monthly = {}     # iprod -> {ym: {qty, sales}} (freshly queried months only)
+branch_monthly = {}   # code -> {ym: {qty, sales}}
+branch_bills = {}     # code -> {ym: bills}
+monthly_totals = {}   # ym -> {qty, sales, bills}
 
 cur = run(f"SELECT iprod, idesc FROM dim_product p WHERE {PRODUCT_FILTER_SQL}")
 for r in cur.fetchall():
